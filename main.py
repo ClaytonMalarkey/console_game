@@ -4,13 +4,12 @@ import dbcreds
 
 # Database setup
 conn = mariadb.connect(
-            user=dbcreds.user,
-            password=dbcreds.password,
-            host=dbcreds.host,
-            port=dbcreds.port,
-            database=dbcreds.database
-        )
-
+    user=dbcreds.user,
+    password=dbcreds.password,
+    host=dbcreds.host,
+    port=dbcreds.port,
+    database=dbcreds.database
+)
 cursor = conn.cursor()
 
 # Game functions
@@ -50,7 +49,7 @@ def select_moves():
     return selected_moves
 
 def fight(user_id, opponent_strength):
-    user_fighter = select_fighter(user_id)
+    user_fighter, user_fighter_name = select_fighter(user_id)
     computer_fighter = select_computer_fighter(opponent_strength)
 
     print(f"You are fighting {computer_fighter[3]}!")
@@ -60,45 +59,60 @@ def fight(user_id, opponent_strength):
         user_damage = calculate_damage(user_move)
         computer_damage = calculate_damage(random.choice([computer_fighter[4], computer_fighter[5], computer_fighter[6], computer_fighter[7]]))
 
-        print(f"You dealt {user_damage} damage!")
-        print(f"{computer_fighter[3]} dealt {computer_damage} damage!")
+        print(f"\033[91mYou dealt {user_damage} damage!\033[0m")
+        print(f"\033[91m{computer_fighter[3]} dealt {computer_damage} damage!\033[0m")
 
         user_fighter[6] -= computer_damage
         computer_fighter[2] -= user_damage
 
-        print(f"Your health: {user_fighter[6]} | {computer_fighter[3]}'s health: {computer_fighter[2]}\n")
+        print(f"\033[91mYour health: {user_fighter[6]} | {computer_fighter[3]}'s health: {computer_fighter[2]}\033[0m\n")
 
     if int(user_fighter[6]) > 0:
-        print(f"You defeated {computer_fighter[3]}! You earned {opponent_strength} points!")
+        print(f"\033[91mYou defeated {computer_fighter[3]}! You earned {opponent_strength} points!\033[0m")
         cursor.callproc("add_points", (user_id, opponent_strength))
         conn.commit()
+        return True  # User wins
     else:
-        print(f"You were defeated by {computer_fighter[3]}. Try again!")
-
+        print(f"\033[91mYou were defeated by {computer_fighter[3]}. Try again!\033[0m")
+        return False  # Computer wins
+    
 def select_fighter(user_id):
     cursor.callproc("get_fighters", (user_id,))
     fighters = cursor.fetchall()
-    print(fighters)
-    for fighter in fighters:
-        print(f"{fighter[0]}. {fighter[1]}")
-    
+
+    if not fighters:
+        print("No fighters found. Please create a new fighter.")
+        return None, None
+
     while True:
-        try:
-            fighter_id = int(input("Select a fighter by entering its ID: "))
+        for fighter in fighters:
+            print(f"ID: {fighter[0]}, Name: {fighter[1]}")
+
+        fighter_id_input = input("Select a fighter by entering its ID: ")
+
+        if not fighter_id_input.isdigit():
+            print("Invalid input. Please enter a valid integer for the fighter ID.")
+            continue
+
+        fighter_id = int(fighter_id_input)
+        if any(fighter[0] == fighter_id for fighter in fighters):
             cursor.callproc("get_fighter", (fighter_id,))
             user_fighter = cursor.fetchone()
 
-            if user_fighter is not None:
-                # Convert health and points to integers
-                user_fighter = list(user_fighter)  # Convert to list to allow modifications
-                user_fighter[6] = int(user_fighter[6])
-                user_fighter[7] = int(user_fighter[7])
+            # Convert health and points to integers here
+            user_fighter = list(user_fighter)  # Convert to list to allow modifications
 
-                return user_fighter
-            else:
-                print("Invalid fighter ID. Please enter a valid ID.")
-        except ValueError:
-            print("Invalid input. Please enter a valid fighter ID.")
+            # Keep the name as a string
+            user_fighter_name = user_fighter[6]
+
+            # Convert health and points to integers
+            user_fighter[6] = int(user_fighter[6])  # Health
+            user_fighter[7] = int(user_fighter[7])  # Points
+
+            print(f"Selected Fighter ID: {user_fighter[0]}")
+            return user_fighter, user_fighter_name  # Return the name separately
+        else:
+            print(f"Invalid fighter ID ({fighter_id}). Please enter a valid ID.")
 
 def select_computer_fighter(opponent_strength):
     cursor.callproc("get_computer_fighter", (opponent_strength,))
@@ -127,6 +141,19 @@ def show_leaderboard():
     for rank, (username, points) in enumerate(leaderboard, start=1):
         print(f"{rank}. {username}: {points} points")
 
+def leaderboard():
+    cursor.callproc("get_leaderboard")
+    leaderboard_data = cursor.fetchall()
+
+    print("\nLeaderboard:")
+    print("Rank | Username | Points")
+    print("-------------------------")
+    
+    for rank, row in enumerate(leaderboard_data, start=1):
+        print(f"{rank:<4} | {row[0]:<8} | {row[1]:<6}")
+    
+    print()
+
 def main():
     while True:
         print("1. Sign Up")
@@ -151,14 +178,21 @@ def main():
                 if sub_choice == '1':
                     create_fighter(user_id)
                 elif sub_choice == '2':
-                    user_fighter = select_fighter(user_id)
+                    user_fighter, user_fighter_name = select_fighter(user_id)
                     if user_fighter:
-                        print(f"You selected {user_fighter[1]}!")
+                        print(f"You selected {user_fighter_name}!")
+                        opponent_strength = input("Select an opponent strength (1 for weak, 2 for fair, 3 for strong): ")
+                        if opponent_strength in ('1', '2', '3'):
+                            computer_fighter = select_computer_fighter(int(opponent_strength))
+                            if computer_fighter:
+                                print(f"You are fighting {computer_fighter[3]}!")
+                        else:
+                            print("Invalid choice.")
                 elif sub_choice == '3':
-                    user_fighter = select_fighter(user_id)
+                    user_fighter, user_fighter_name = select_fighter(user_id)
                     if user_fighter:
                         print(f"Fighter Details:")
-                        print(f"Name: {user_fighter[1]}")
+                        print(f"Name: {user_fighter_name}")
                         print(f"Health: {user_fighter[6]}")
                         print(f"Points: {user_fighter[7]}")
                         moves = [user_fighter[2], user_fighter[3], user_fighter[4], user_fighter[5]]
@@ -168,15 +202,15 @@ def main():
                             move = cursor.fetchone()
                             print(f"{move[1]} ({move[2]} - {move[3]})")
                 elif sub_choice == '4':
-                    print("1. Fight a weak opponent")
-                    print("2. Fight a fair opponent")
-                    print("3. Fight a strong opponent")
-                    print("4. Return to Fighter Menu")
-                    opponent_choice = input("Select an opponent: ")
-
-                    if opponent_choice in ('1', '2', '3'):
-                        fight(user_id, int(opponent_choice))
-                    elif opponent_choice == '4':
+                    print("1. Fight")
+                    print("2. Return to Fighter Menu")
+                    fight_choice = input("Select an option: ")
+                    if fight_choice == '1':
+                        if 'computer_fighter' in locals():
+                            fight(user_id, int(opponent_strength))
+                        else:
+                            print("Please select a computer opponent first.")
+                    elif fight_choice == '2':
                         pass
                     else:
                         print("Invalid choice.")
